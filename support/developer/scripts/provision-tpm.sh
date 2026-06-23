@@ -43,6 +43,8 @@ SYSTEM_KEYSTORE="$STATE_DIR/system-keystore"
 EVENTLOG_DIR="$STATE_DIR/eventlog"
 PROFILE_DIR="$STATE_DIR/profiles"
 PROVISIONED_MARKER="$STATE_DIR/.provisioned"
+CONTAINER_MOUNT="${TPM_CONTAINER_MOUNT:-/tpm}"
+CONTAINER_FAPI_CONF="$STATE_DIR/fapi-config.container.json"
 
 log() { printf '==> %s\n' "$*"; }
 
@@ -154,6 +156,27 @@ EOF
     log "FAPI config written to $FAPI_CONF (profile $PROFILE)."
 }
 
+write_container_fapi_config() {
+    # FAPI config for running the sidecar inside a container where this state
+    # directory is bind-mounted at $CONTAINER_MOUNT. The keystore layout is the
+    # same; only the absolute paths differ from the host config.
+    cat > "$CONTAINER_FAPI_CONF" <<EOF
+{
+    "profile_name": "$PROFILE",
+    "profile_dir": "$CONTAINER_MOUNT/profiles",
+    "user_dir": "$CONTAINER_MOUNT/user-keystore",
+    "system_dir": "$CONTAINER_MOUNT/system-keystore",
+    "tcti": "$TCTI",
+    "ek_cert_less": "yes",
+    "system_pcrs": [],
+    "log_dir": "$CONTAINER_MOUNT/eventlog",
+    "firmware_log_file": "/dev/null",
+    "ima_log_file": "/dev/null"
+}
+EOF
+    log "Container FAPI config written to $CONTAINER_FAPI_CONF (mount $CONTAINER_MOUNT)."
+}
+
 provision_keystore() {
     if [[ -f "$PROVISIONED_MARKER" ]]; then
         log "FAPI keystore already provisioned."
@@ -215,6 +238,7 @@ main() {
     ensure_device_access
     write_fapi_profile
     write_fapi_config
+    write_container_fapi_config
     provision_keystore
     create_signing_key
     export_public_pem
@@ -227,6 +251,9 @@ TPM provisioning complete.
 To run the sidecar against the TPM:
   source "$ENV_FILE"
   ./build/kms-sidecar/kms-sidecar
+
+To run the containers against the TPM:
+  ./support/developer/scripts/run-containers.sh
 
 The sample-service verifies signatures using:
   $PUBLIC_PEM

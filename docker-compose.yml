@@ -6,15 +6,18 @@ services:
     container_name: kms-sidecar
     environment:
       SOCKET_PATH: /run/kms/kms.sock
-      BACKEND: dev
+      BACKEND: tpm
       POLICY_CLIENT_ID: sample-service
       POLICY_KEY_ID: server-key
       RATE_LIMIT_PER_MIN: "120"
       TPM_KEY_PATH: HS/SRK/kms-signing-key
       TPM_PUBLIC_PEM: /keys/server-public.pem
+      TSS2_FAPICONF: /tpm/fapi-config.container.json
+    devices:
+      - /dev/tpmrm0:/dev/tpmrm0
     volumes:
       - kms-socket:/run/kms
-      - /dev/tpmrm0:/dev/tpmrm0
+      - ${HOME}/.local/share/hw-binding-tpm:/tpm
       - ./keys:/keys:ro
     restart: unless-stopped
 
