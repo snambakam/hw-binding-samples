@@ -6,6 +6,8 @@ RUN dnf install -y --setopt=install_weak_deps=False \
     openssl-libs \
     tpm2-tss \
     tpm2-tools \
+    grpc-cpp \
+    protobuf \
     && dnf clean all
 
 COPY build/kms-sidecar/kms-sidecar /usr/local/bin/kms-sidecar

@@ -1,7 +1,12 @@
 #ifndef SAMPLE_SERVICE_H
 #define SAMPLE_SERVICE_H
 
+#include <stddef.h>
 #include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*
  * Sample service error codes.
@@ -26,5 +31,31 @@
 uint32_t SampleServiceInitialize(void);
 uint32_t SampleServiceRun(void);
 void SampleServiceFinalize(void);
+
+uint32_t SampleKmsConnect(const char *target, void **outClient);
+uint32_t SampleKmsHealth(void *client, char *backend, size_t backendLength);
+uint32_t SampleKmsSign(
+    void *client,
+    const char *clientId,
+    const char *keyId,
+    const unsigned char *payload,
+    size_t payloadLength,
+    unsigned char *signature,
+    size_t signatureCapacity,
+    size_t *signatureLength
+);
+uint32_t SampleKmsGetPublicKey(
+    void *client,
+    const char *clientId,
+    const char *keyId,
+    unsigned char *publicKey,
+    size_t publicKeyCapacity,
+    size_t *publicKeyLength
+);
+void SampleKmsDisconnect(void *client);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

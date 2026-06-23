@@ -1,7 +1,12 @@
 #ifndef KMS_SIDECAR_H
 #define KMS_SIDECAR_H
 
+#include <stddef.h>
 #include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*
  * KMS sidecar error codes.
@@ -30,5 +35,44 @@
 uint32_t KmsSidecarInitialize(void);
 uint32_t KmsSidecarRun(void);
 void KmsSidecarFinalize(void);
+
+/*
+ * Service operations invoked by the gRPC server shim. Each returns KMS_OK on
+ * success or a non-zero KMS error code on failure.
+ */
+uint32_t KmsServiceHealth(
+    char *backend,
+    size_t backendLength
+);
+
+uint32_t KmsServiceSign(
+    const char *clientId,
+    const char *keyId,
+    const unsigned char *payload,
+    size_t payloadLength,
+    unsigned char *signature,
+    size_t signatureCapacity,
+    size_t *signatureLength
+);
+
+uint32_t KmsServiceGetPublicKey(
+    const char *clientId,
+    const char *keyId,
+    unsigned char *publicKey,
+    size_t publicKeyCapacity,
+    size_t *publicKeyLength
+);
+
+/*
+ * gRPC server entry point implemented in C++ (grpc_server.cc). Binds to the
+ * given Unix socket path and serves until the process is terminated.
+ */
+uint32_t KmsGrpcServerRun(
+    const char *socketPath
+);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

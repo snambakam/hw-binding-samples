@@ -17,20 +17,28 @@ flowchart LR
     subgraph pod["Deployment unit (pod / host)"]
         app["sample-service\n(application)"]
         sidecar["kms-sidecar\n(key custodian)"]
-        app -- "Unix socket\n/run/kms/kms.sock" --> sidecar
+        app -- "gRPC over Unix socket\n/run/kms/kms.sock" --> sidecar
     end
     sidecar -- "dev backend" --> dev["in-process\nOpenSSL RSA key"]
     sidecar -- "tpm backend\nFAPI" --> tpm[("TPM 2.0\n/dev/tpmrm0")]
 ```
 
-The application and the sidecar share only a Unix domain socket. The signing
-key lives entirely behind the sidecar boundary:
+The application and the sidecar communicate over **gRPC carried on a Unix
+domain socket** (gRPC target `unix:/run/kms/kms.sock`). The service contract is
+defined in [idl/kms.proto](idl/kms.proto) (`kms.KmsService`). The signing key
+lives entirely behind the sidecar boundary:
 
 - In **dev** mode the key is an ephemeral RSA key generated in the sidecar
   process (for local development and CI).
 - In **tpm** mode the private key never leaves the TPM; the sidecar calls the
   TPM Feature API (FAPI) `Fapi_Sign` and only ever handles the resulting
   signature and the public key.
+
+The gRPC layer is implemented in C++ and exposed to the C services through thin
+`extern "C"` wrappers (`KmsGrpcServerRun` on the sidecar; `SampleKms*` client
+functions on the application). Binary fields (`payload`, `signature`,
+`public_key_pem`) are carried as protobuf `bytes`, so no base64 encoding is
+needed on the wire.
 
 ### Signing flow
 
@@ -39,28 +47,32 @@ sequenceDiagram
     participant App as sample-service
     participant KMS as kms-sidecar
     participant TPM as TPM (tpm mode)
-    App->>KMS: HEALTH
-    KMS-->>App: OK HEALTH <backend>
-    App->>KMS: SIGN <client_id> <key_id> <payload_b64>
+    App->>KMS: Health()
+    KMS-->>App: HealthResponse{backend}
+    App->>KMS: Sign(client_id, key_id, payload)
     KMS->>KMS: policy + rate-limit checks
     KMS->>TPM: Fapi_Sign(keyPath, RSA_SSA, SHA256(payload))
     TPM-->>KMS: signature
-    KMS-->>App: OK SIGNATURE <signature_b64>
-    App->>KMS: GET_PUBLIC_KEY <client_id> <key_id>
-    KMS-->>App: OK PUBLIC_KEY <pem_b64>
+    KMS-->>App: SignResponse{signature}
+    App->>KMS: GetPublicKey(client_id, key_id)
+    KMS-->>App: GetPublicKeyResponse{public_key_pem}
     App->>App: verify signature with public key
 ```
 
 Signatures are RSA PKCS#1 v1.5 (`RSA_SSA`) over a SHA-256 digest, which the
-sample-service verifies with the returned public key.
+sample-service verifies with the returned public key. Policy and rate-limit
+failures map to gRPC `PERMISSION_DENIED` and `RESOURCE_EXHAUSTED` status codes.
 
 ### Repository layout
 
 ```
+idl/                         gRPC service contract (kms.proto) + build glue
 kms-sidecar/                 Sidecar service
   include/kms_sidecar.h      Public header: error codes + entry points
   src/                       includes.h, defines.h, externs.h, globals.c, *.c
+                             grpc_server.cc (C++ gRPC server, C-wrapped)
 sample-service/              Sample application (same module layout)
+  src/grpc_client.cc         C++ gRPC client, C-wrapped
 tunnel-demo/<svc>/Dockerfile Runtime-only images (copy prebuilt binaries)
 support/developer/scripts/   setup-devenv.sh, provision-tpm.sh, run-containers.sh
 configure.ac, Makefile.am    Autotools build
@@ -169,17 +181,21 @@ BACKEND=dev ./support/developer/scripts/run-containers.sh
 
 ## Sidecar protocol
 
-A small newline-terminated text protocol over the Unix socket:
+The sidecar exposes the gRPC service `kms.KmsService`, defined in
+[idl/kms.proto](idl/kms.proto), over a Unix domain socket:
 
-| Request | Success response |
-| --- | --- |
-| `HEALTH` | `OK HEALTH <backend>` |
-| `SIGN <client_id> <key_id> <payload_base64>` | `OK SIGNATURE <signature_base64>` |
-| `GET_PUBLIC_KEY <client_id> <key_id>` | `OK PUBLIC_KEY <pem_base64>` |
+| RPC | Request fields | Response fields |
+| --- | --- | --- |
+| `Health` | — | `backend` (string) |
+| `Sign` | `client_id`, `key_id`, `payload` (bytes) | `signature` (bytes) |
+| `GetPublicKey` | `client_id`, `key_id` | `public_key_pem` (bytes) |
 
-Errors are returned as `ERR <code> <reason>` (for example `ERR 403 forbidden`,
-`ERR 429 rate_limited`, `ERR 400 invalid_arguments`). The `client_id` and
-`key_id` must match the sidecar policy, and requests are rate-limited.
+Binary fields are protobuf `bytes`, so no base64 encoding is used. Failures are
+returned as gRPC status codes: policy violations map to `PERMISSION_DENIED`,
+rate-limit violations to `RESOURCE_EXHAUSTED`, and all other failures to
+`INTERNAL` (the sidecar's `0x1xxx` error code is included in the status
+message). The `client_id` and `key_id` must match the sidecar policy, and
+requests are rate-limited.
 
 ## Configuration
 

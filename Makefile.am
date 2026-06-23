@@ -1,6 +1,7 @@
-SUBDIRS = kms-sidecar sample-service
+SUBDIRS = idl kms-sidecar sample-service
 
 EXTRA_DIST = \
     docker-compose.yml \
     README.md \
-    skills.md
+    skills.md \
+    idl/kms.proto

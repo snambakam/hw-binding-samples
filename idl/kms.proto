@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package kms;
+
+// KMS sidecar signing service. The sample-service is the only client; it never
+// receives private key material, only signatures and the public key.
+service KmsService {
+    // Liveness/identity check; returns the active signing backend.
+    rpc Health(HealthRequest) returns (HealthResponse);
+
+    // Sign a payload with the policy-bound key.
+    rpc Sign(SignRequest) returns (SignResponse);
+
+    // Return the PEM-encoded public key for verification.
+    rpc GetPublicKey(GetPublicKeyRequest) returns (GetPublicKeyResponse);
+}
+
+message HealthRequest {
+}
+
+message HealthResponse {
+    string backend = 1;
+}
+
+message SignRequest {
+    string client_id = 1;
+    string key_id = 2;
+    bytes payload = 3;
+}
+
+message SignResponse {
+    bytes signature = 1;
+}
+
+message GetPublicKeyRequest {
+    string client_id = 1;
+    string key_id = 2;
+}
+
+message GetPublicKeyResponse {
+    bytes public_key_pem = 1;
+}

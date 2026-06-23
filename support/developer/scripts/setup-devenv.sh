@@ -22,10 +22,15 @@ PACKAGES=(
     libtool
     make
     gcc
+    gcc-c++
     pkgconf-pkg-config
     openssl-devel
     tpm2-tools
     tpm2-tss-devel
+    grpc-devel
+    grpc-plugins
+    protobuf-devel
+    protobuf-compiler
 )
 
 echo "Installing build dependencies on Fedora..."

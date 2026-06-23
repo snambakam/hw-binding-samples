@@ -1,12 +1,5 @@
 #include "includes.h"
 
-static volatile sig_atomic_t gIsRunning = 1;
-
-static void
-KmsHandleSignal(
-    int signalNumber
-);
-
 static uint32_t
 KmsLoadConfiguration(
     void
@@ -20,34 +13,6 @@ KmsEnsureSocketDirectory(
 static uint32_t
 KmsCreateDevKey(
     void
-);
-
-static uint32_t
-KmsHandleClient(
-    int clientFd
-);
-
-static uint32_t
-KmsProcessCommand(
-    const char *line,
-    char *response,
-    size_t responseLength
-);
-
-static uint32_t
-KmsDecodeBase64(
-    const char *input,
-    unsigned char *output,
-    size_t outputLength,
-    size_t *decodedLength
-);
-
-static uint32_t
-KmsEncodeBase64(
-    const unsigned char *input,
-    size_t inputLength,
-    char *output,
-    size_t outputLength
 );
 
 static uint32_t
@@ -91,18 +56,12 @@ uint32_t
 KmsSidecarInitialize(
     void
 ) {
-    struct sigaction action;
     uint32_t status;
 
     status = KmsLoadConfiguration();
     if (status != KMS_OK) {
         return status;
     }
-
-    memset(&action, 0, sizeof(action));
-    action.sa_handler = KmsHandleSignal;
-    sigaction(SIGINT, &action, NULL);
-    sigaction(SIGTERM, &action, NULL);
 
     if (strcmp(gKmsBackend, "dev") == 0) {
         status = KmsCreateDevKey();
@@ -123,7 +82,6 @@ uint32_t
 KmsSidecarRun(
     void
 ) {
-    struct sockaddr_un address;
     uint32_t status;
 
     status = KmsEnsureSocketDirectory(gKmsSocketPath);
@@ -131,53 +89,15 @@ KmsSidecarRun(
         return status;
     }
 
-    gKmsServerFd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (gKmsServerFd < 0) {
-        perror("socket");
-        return KMS_ERR_SOCKET_CREATE;
-    }
-
-    memset(&address, 0, sizeof(address));
-    address.sun_family = AF_UNIX;
-    strncpy(address.sun_path, gKmsSocketPath, sizeof(address.sun_path) - 1);
-
     unlink(gKmsSocketPath);
-    if (bind(gKmsServerFd, (struct sockaddr *)&address, sizeof(address)) != 0) {
-        perror("bind");
-        return KMS_ERR_SOCKET_BIND;
-    }
 
-    if (listen(gKmsServerFd, 16) != 0) {
-        perror("listen");
-        return KMS_ERR_SOCKET_LISTEN;
-    }
-
-    while (gIsRunning) {
-        int clientFd = accept(gKmsServerFd, NULL, NULL);
-        if (clientFd < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            perror("accept");
-            break;
-        }
-
-        KmsHandleClient(clientFd);
-        close(clientFd);
-    }
-
-    return KMS_OK;
+    return KmsGrpcServerRun(gKmsSocketPath);
 }
 
 void
 KmsSidecarFinalize(
     void
 ) {
-    if (gKmsServerFd >= 0) {
-        close(gKmsServerFd);
-        gKmsServerFd = -1;
-    }
-
     unlink(gKmsSocketPath);
 
     if (gKmsDevPrivateKey != NULL) {
@@ -189,14 +109,6 @@ KmsSidecarFinalize(
         Fapi_Finalize(&gKmsFapiContext);
         gKmsFapiContext = NULL;
     }
-}
-
-static void
-KmsHandleSignal(
-    int signalNumber
-) {
-    (void)signalNumber;
-    gIsRunning = 0;
 }
 
 static uint32_t
@@ -306,216 +218,92 @@ KmsCreateDevKey(
     return KMS_OK;
 }
 
-static uint32_t
-KmsHandleClient(
-    int clientFd
+uint32_t
+KmsServiceHealth(
+    char *backend,
+    size_t backendLength
 ) {
-    char input[KMS_MAX_LINE];
-    char response[KMS_MAX_B64];
-    ssize_t bytesRead;
-    size_t index;
-
-    memset(input, 0, sizeof(input));
-    bytesRead = read(clientFd, input, sizeof(input) - 1);
-    if (bytesRead <= 0) {
-        return KMS_ERR_CLIENT_READ;
+    if (backend == NULL || backendLength == 0) {
+        return KMS_ERR_INTERNAL;
     }
 
-    for (index = 0; index < (size_t)bytesRead; index++) {
-        if (input[index] == '\n' || input[index] == '\r') {
-            input[index] = '\0';
-            break;
-        }
-    }
-
-    if (KmsProcessCommand(input, response, sizeof(response)) != KMS_OK) {
-        snprintf(response, sizeof(response), "ERR 500 internal_error\n");
-    }
-
-    write(clientFd, response, strlen(response));
+    strncpy(backend, gKmsBackend, backendLength - 1);
+    backend[backendLength - 1] = '\0';
     return KMS_OK;
 }
 
-static uint32_t
-KmsProcessCommand(
-    const char *line,
-    char *response,
-    size_t responseLength
+uint32_t
+KmsServiceSign(
+    const char *clientId,
+    const char *keyId,
+    const unsigned char *payload,
+    size_t payloadLength,
+    unsigned char *signature,
+    size_t signatureCapacity,
+    size_t *signatureLength
 ) {
-    char command[KMS_MAX_TEXT];
-    char clientId[KMS_MAX_TEXT];
-    char keyId[KMS_MAX_TEXT];
-    char payloadB64[KMS_MAX_B64];
+    uint32_t status;
 
-    unsigned char payload[KMS_MAX_B64];
-    unsigned char signature[KMS_MAX_B64];
-    unsigned char publicKey[KMS_MAX_B64];
-
-    size_t payloadLength;
-    size_t signatureLength;
-    size_t publicKeyLength;
-    char signatureB64[KMS_MAX_B64];
-    char publicKeyB64[KMS_MAX_B64];
-
-    memset(command, 0, sizeof(command));
-    memset(clientId, 0, sizeof(clientId));
-    memset(keyId, 0, sizeof(keyId));
-    memset(payloadB64, 0, sizeof(payloadB64));
-
-    if (sscanf(line, "%511s", command) != 1) {
-        snprintf(response, responseLength, "ERR 400 invalid_command\n");
-        return KMS_OK;
+    status = KmsCheckPolicy(clientId, keyId);
+    if (status != KMS_OK) {
+        return status;
     }
 
-    if (strcmp(command, "HEALTH") == 0) {
-        snprintf(response, responseLength, "OK HEALTH %s\n", gKmsBackend);
-        return KMS_OK;
+    status = KmsCheckRateLimit();
+    if (status != KMS_OK) {
+        return status;
     }
 
-    if (strcmp(command, "GET_PUBLIC_KEY") == 0) {
-        if (sscanf(line, "%511s %511s %511s", command, clientId, keyId) != 3) {
-            snprintf(response, responseLength, "ERR 400 invalid_arguments\n");
-            return KMS_OK;
-        }
-
-        if (KmsCheckPolicy(clientId, keyId) != KMS_OK) {
-            snprintf(response, responseLength, "ERR 403 forbidden\n");
-            return KMS_OK;
-        }
-
-        if (KmsCheckRateLimit() != KMS_OK) {
-            snprintf(response, responseLength, "ERR 429 rate_limited\n");
-            return KMS_OK;
-        }
-
-        if (strcmp(gKmsBackend, "tpm") == 0) {
-            if (KmsReadFile(gKmsTpmPublicPem, publicKey, sizeof(publicKey), &publicKeyLength) != KMS_OK) {
-                snprintf(response, responseLength, "ERR 404 public_key_not_found\n");
-                return KMS_OK;
-            }
-        } else {
-            BIO *bio = BIO_new(BIO_s_mem());
-            if (bio == NULL) {
-                snprintf(response, responseLength, "ERR 500 bio_error\n");
-                return KMS_OK;
-            }
-
-            PEM_write_bio_PUBKEY(bio, gKmsDevPrivateKey);
-            publicKeyLength = BIO_read(bio, publicKey, sizeof(publicKey));
-            BIO_free(bio);
-            if (publicKeyLength == 0 || publicKeyLength == (size_t)-1) {
-                snprintf(response, responseLength, "ERR 500 public_key_error\n");
-                return KMS_OK;
-            }
-        }
-
-        if (KmsEncodeBase64(publicKey, publicKeyLength, publicKeyB64, sizeof(publicKeyB64)) != KMS_OK) {
-            snprintf(response, responseLength, "ERR 500 base64_error\n");
-            return KMS_OK;
-        }
-
-        snprintf(response, responseLength, "OK PUBLIC_KEY %s\n", publicKeyB64);
-        return KMS_OK;
+    if (strcmp(gKmsBackend, "tpm") == 0) {
+        return KmsSignTpm(payload, payloadLength, signature, signatureCapacity, signatureLength);
     }
 
-    if (strcmp(command, "SIGN") == 0) {
-        if (sscanf(line, "%511s %511s %511s %16383s", command, clientId, keyId, payloadB64) != 4) {
-            snprintf(response, responseLength, "ERR 400 invalid_arguments\n");
-            return KMS_OK;
-        }
-
-        if (KmsCheckPolicy(clientId, keyId) != KMS_OK) {
-            snprintf(response, responseLength, "ERR 403 forbidden\n");
-            return KMS_OK;
-        }
-
-        if (KmsCheckRateLimit() != KMS_OK) {
-            snprintf(response, responseLength, "ERR 429 rate_limited\n");
-            return KMS_OK;
-        }
-
-        if (KmsDecodeBase64(payloadB64, payload, sizeof(payload), &payloadLength) != KMS_OK) {
-            snprintf(response, responseLength, "ERR 400 invalid_payload\n");
-            return KMS_OK;
-        }
-
-        if (strcmp(gKmsBackend, "tpm") == 0) {
-            if (KmsSignTpm(payload, payloadLength, signature, sizeof(signature), &signatureLength) != KMS_OK) {
-                snprintf(response, responseLength, "ERR 500 sign_failed\n");
-                return KMS_OK;
-            }
-        } else {
-            if (KmsSignDev(payload, payloadLength, signature, sizeof(signature), &signatureLength) != KMS_OK) {
-                snprintf(response, responseLength, "ERR 500 sign_failed\n");
-                return KMS_OK;
-            }
-        }
-
-        if (KmsEncodeBase64(signature, signatureLength, signatureB64, sizeof(signatureB64)) != KMS_OK) {
-            snprintf(response, responseLength, "ERR 500 base64_error\n");
-            return KMS_OK;
-        }
-
-        snprintf(response, responseLength, "OK SIGNATURE %s\n", signatureB64);
-        return KMS_OK;
-    }
-
-    snprintf(response, responseLength, "ERR 400 unknown_command\n");
-    return KMS_OK;
+    return KmsSignDev(payload, payloadLength, signature, signatureCapacity, signatureLength);
 }
 
-static uint32_t
-KmsDecodeBase64(
-    const char *input,
-    unsigned char *output,
-    size_t outputLength,
-    size_t *decodedLength
+uint32_t
+KmsServiceGetPublicKey(
+    const char *clientId,
+    const char *keyId,
+    unsigned char *publicKey,
+    size_t publicKeyCapacity,
+    size_t *publicKeyLength
 ) {
-    int inputLength;
-    int bytes;
+    uint32_t status;
+    BIO *bio;
+    int bioLength;
 
-    inputLength = (int)strlen(input);
-    if (inputLength <= 0) {
-        return KMS_ERR_BASE64_DECODE;
+    status = KmsCheckPolicy(clientId, keyId);
+    if (status != KMS_OK) {
+        return status;
     }
 
-    if (outputLength < (size_t)((inputLength / 4) * 3 + 3)) {
-        return KMS_ERR_BASE64_DECODE;
+    status = KmsCheckRateLimit();
+    if (status != KMS_OK) {
+        return status;
     }
 
-    bytes = EVP_DecodeBlock(output, (const unsigned char *)input, inputLength);
-    if (bytes < 0) {
-        return KMS_ERR_BASE64_DECODE;
+    if (strcmp(gKmsBackend, "tpm") == 0) {
+        return KmsReadFile(gKmsTpmPublicPem, publicKey, publicKeyCapacity, publicKeyLength);
     }
 
-    while (input[inputLength - 1] == '=') {
-        bytes--;
-        inputLength--;
+    bio = BIO_new(BIO_s_mem());
+    if (bio == NULL) {
+        return KMS_ERR_INTERNAL;
     }
 
-    *decodedLength = (size_t)bytes;
-    return KMS_OK;
-}
-
-static uint32_t
-KmsEncodeBase64(
-    const unsigned char *input,
-    size_t inputLength,
-    char *output,
-    size_t outputLength
-) {
-    int encodedLength;
-
-    if (outputLength < ((inputLength + 2) / 3) * 4 + 1) {
-        return KMS_ERR_BASE64_ENCODE;
+    if (PEM_write_bio_PUBKEY(bio, gKmsDevPrivateKey) != 1) {
+        BIO_free(bio);
+        return KMS_ERR_INTERNAL;
     }
 
-    encodedLength = EVP_EncodeBlock((unsigned char *)output, input, (int)inputLength);
-    if (encodedLength <= 0) {
-        return KMS_ERR_BASE64_ENCODE;
+    bioLength = BIO_read(bio, publicKey, (int)publicKeyCapacity);
+    BIO_free(bio);
+    if (bioLength <= 0) {
+        return KMS_ERR_INTERNAL;
     }
 
-    output[encodedLength] = '\0';
+    *publicKeyLength = (size_t)bioLength;
     return KMS_OK;
 }
 

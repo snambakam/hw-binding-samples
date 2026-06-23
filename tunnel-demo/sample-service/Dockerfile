@@ -4,6 +4,8 @@ FROM fedora:44
 # copied in below; no toolchain or build steps live in this image.
 RUN dnf install -y --setopt=install_weak_deps=False \
     openssl-libs \
+    grpc-cpp \
+    protobuf \
     && dnf clean all
 
 COPY build/sample-service/sample-service /usr/local/bin/sample-service
