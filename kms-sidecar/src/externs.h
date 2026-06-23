@@ -1,0 +1,12 @@
+extern int gKmsServerFd;
+extern int gKmsRateLimitPerMin;
+extern int gKmsRateEventCount;
+extern time_t gKmsRateEvents[KMS_MAX_RATE_EVENTS];
+extern char gKmsSocketPath[PATH_MAX];
+extern char gKmsBackend[KMS_MAX_TEXT];
+extern char gKmsPolicyClientId[KMS_MAX_TEXT];
+extern char gKmsPolicyKeyId[KMS_MAX_TEXT];
+extern char gKmsFapiKeyPath[PATH_MAX];
+extern char gKmsTpmPublicPem[PATH_MAX];
+extern EVP_PKEY *gKmsDevPrivateKey;
+extern FAPI_CONTEXT *gKmsFapiContext;

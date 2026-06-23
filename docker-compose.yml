@@ -1,0 +1,37 @@
+services:
+  kms-sidecar:
+    build:
+      context: .
+      dockerfile: tunnel-demo/kms-sidecar/Dockerfile
+    container_name: kms-sidecar
+    environment:
+      SOCKET_PATH: /run/kms/kms.sock
+      BACKEND: dev
+      POLICY_CLIENT_ID: sample-service
+      POLICY_KEY_ID: server-key
+      RATE_LIMIT_PER_MIN: "120"
+      TPM_KEY_PATH: HS/SRK/kms-signing-key
+      TPM_PUBLIC_PEM: /keys/server-public.pem
+    volumes:
+      - kms-socket:/run/kms
+      - /dev/tpmrm0:/dev/tpmrm0
+      - ./keys:/keys:ro
+    restart: unless-stopped
+
+  sample-service:
+    build:
+      context: .
+      dockerfile: tunnel-demo/sample-service/Dockerfile
+    container_name: sample-service
+    depends_on:
+      - kms-sidecar
+    environment:
+      SOCKET_PATH: /run/kms/kms.sock
+      KMS_CLIENT_ID: sample-service
+      KMS_KEY_ID: server-key
+      SAMPLE_MESSAGE: hello-from-sample
+    volumes:
+      - kms-socket:/run/kms
+
+volumes:
+  kms-socket:

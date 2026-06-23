@@ -1,0 +1,10 @@
+#define KMS_DEFAULT_SOCKET_PATH "/run/kms/kms.sock"
+#define KMS_DEFAULT_CLIENT_ID "sample-service"
+#define KMS_DEFAULT_KEY_ID "server-key"
+#define KMS_DEFAULT_BACKEND "dev"
+#define KMS_DEFAULT_FAPI_KEY_PATH "HS/SRK/kms-signing-key"
+#define KMS_DEFAULT_RATE_LIMIT_PER_MIN 120
+#define KMS_MAX_LINE 8192
+#define KMS_MAX_TEXT 512
+#define KMS_MAX_B64 16384
+#define KMS_MAX_RATE_EVENTS 1024

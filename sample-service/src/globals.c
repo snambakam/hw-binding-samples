@@ -1,0 +1,6 @@
+#include "includes.h"
+
+char gSampleSocketPath[PATH_MAX] = SAMPLE_DEFAULT_SOCKET_PATH;
+char gSampleClientId[SAMPLE_MAX_TEXT] = SAMPLE_DEFAULT_CLIENT_ID;
+char gSampleKeyId[SAMPLE_MAX_TEXT] = SAMPLE_DEFAULT_KEY_ID;
+char gSampleMessage[SAMPLE_MAX_LINE] = SAMPLE_DEFAULT_MESSAGE;
