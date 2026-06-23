@@ -1,29 +1,14 @@
-FROM debian:bookworm-slim AS build
+FROM fedora:44
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    autoconf \
-    automake \
-    build-essential \
-    libssl-dev \
-    libtss2-dev \
-    libtool \
-    pkg-config \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /src
-COPY . /src
-
-RUN autoreconf -fi && ./configure && make -j"$(nproc)"
-
-FROM debian:bookworm-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libssl3 \
-    libtss2-fapi1 \
+# Runtime libraries only. The binary is built on the host (see build/) and
+# copied in below; no toolchain or build steps live in this image.
+RUN dnf install -y --setopt=install_weak_deps=False \
+    openssl-libs \
+    tpm2-tss \
     tpm2-tools \
-    && rm -rf /var/lib/apt/lists/*
+    && dnf clean all
 
-COPY --from=build /src/kms-sidecar/kms-sidecar /usr/local/bin/kms-sidecar
+COPY build/kms-sidecar/kms-sidecar /usr/local/bin/kms-sidecar
 
 ENV SOCKET_PATH=/run/kms/kms.sock
 ENV BACKEND=dev

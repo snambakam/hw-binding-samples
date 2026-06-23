@@ -1,26 +1,12 @@
-FROM debian:bookworm-slim AS build
+FROM fedora:44
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    autoconf \
-    automake \
-    build-essential \
-    libssl-dev \
-    libtool \
-    pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+# Runtime libraries only. The binary is built on the host (see build/) and
+# copied in below; no toolchain or build steps live in this image.
+RUN dnf install -y --setopt=install_weak_deps=False \
+    openssl-libs \
+    && dnf clean all
 
-WORKDIR /src
-COPY . /src
-
-RUN autoreconf -fi && ./configure && make -j"$(nproc)"
-
-FROM debian:bookworm-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libssl3 \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=build /src/sample-service/sample-service /usr/local/bin/sample-service
+COPY build/sample-service/sample-service /usr/local/bin/sample-service
 
 ENV SOCKET_PATH=/run/kms/kms.sock
 ENV KMS_CLIENT_ID=sample-service

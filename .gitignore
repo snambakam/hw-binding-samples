@@ -71,3 +71,6 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Generated TPM/dev keys (produced by provision-tpm.sh)
+/keys/
